@@ -33,7 +33,9 @@ const (
 	swpNoActivate       = 0x0010       //定义修改窗口样式时不激活窗口
 	swpFrameChanged     = 0x0020       //定义通知系统重新计算窗口边框
 	gwlExStyle          = ^uintptr(19) //定义GWL_EXSTYLE 的数值，对应-20
-	whMouseLL           = 14           //定义低级鼠标钩子类型
+	wmLeftButtonDown    = 0x0201
+	wmLeftButtonUp      = 0x0202
+	whMouseLL           = 14 //定义低级鼠标钩子类型
 )
 
 var (
@@ -70,12 +72,15 @@ type overlayInteractiveArea struct {
 }
 
 var (
+	overlayPointerEngaged atomic.Bool
 	overlayHWND           atomic.Uintptr                         //保存弹幕窗口句柄
 	overlayArea           atomic.Pointer[overlayInteractiveArea] //保存控制面板交互区域
 	overlayAreaSpec       atomic.Pointer[overlayInteractiveArea] //保存前端上报的相对交互区域
 	overlayPassThrough    atomic.Bool                            //保存当前鼠标穿透状态
 	overlayStyleReady     atomic.Bool                            //保存窗口样式是否已经初始化
-	manualInteractiveMode atomic.Bool                            //保存手动交互模式状态
+	manualInteractiveMode atomic.Bool
+	//保存手动交互模式状态
+
 )
 
 type winPoint struct {
@@ -95,6 +100,16 @@ type winMsg struct {
 var overlayMouseHookProc = windows.NewCallback(func(nCode, wParam, lParam uintptr) uintptr {
 	if int32(nCode) >= 0 && lParam != 0 && !manualInteractiveMode.Load() {
 		data := mouseHookDataFromLParam(lParam)
+
+		switch wParam {
+		case wmLeftButtonDown:
+			if isOverlayInteractivePoint(data.point.x, data.point.y) {
+				overlayPointerEngaged.Store(true)
+			}
+		case wmLeftButtonUp:
+			overlayPointerEngaged.Store(false)
+		}
+
 		updateOverlayInteraction(data.point.x, data.point.y)
 	}
 
@@ -123,6 +138,7 @@ func startOverlayIntegration(ctx context.Context) {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 
+		// 鼠标钩子属于增强功能，安装失败时仍然继续启用定时检测。
 		var module windows.Handle
 		err := windows.GetModuleHandleEx(
 			windows.GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -130,30 +146,37 @@ func startOverlayIntegration(ctx context.Context) {
 			&module,
 		)
 		if err != nil {
-			fmt.Println("获取程序模块失败:", err)
-			return
+			fmt.Println("获取程序模块失败，跳过鼠标钩子:", err)
+		} else {
+			hook, _, callErr := procSetWindowsHookEx.Call(
+				whMouseLL,
+				overlayMouseHookProc,
+				uintptr(module),
+				0,
+			)
+			if hook != 0 {
+				defer procUnhookWindowsHook.Call(hook)
+			} else {
+				fmt.Println(
+					"安装鼠标交互钩子失败，改用定时检测:",
+					winCallError(callErr),
+				)
+			}
 		}
 
-		hook, _, callErr := procSetWindowsHookEx.Call(
-			whMouseLL,
-			overlayMouseHookProc,
-			uintptr(module),
-			0,
-		)
-		if hook == 0 {
-			fmt.Println("安装鼠标交互钩子失败:", winCallError(callErr))
-			return
-		}
-		defer procUnhookWindowsHook.Call(hook)
-
+		// 初始状态允许鼠标穿透，鼠标进入控制面板后再关闭穿透。
 		if err := setOverlayClickThrough(hwnd, true); err != nil {
 			fmt.Println("启用鼠标穿透失败:", err)
 			return
 		}
 
+		// 应用前端已经上报的控制面板交互区域。
 		if spec := overlayAreaSpec.Load(); spec != nil {
 			applyOverlayArea(hwnd, spec)
 		}
+
+		// 即使低级鼠标钩子不可用，也通过定时检测保证面板可以点击。
+		startOverlayCursorTracking(ctx, hwnd)
 
 		ok, _, callErr := procRegisterHotKey.Call(
 			0,
@@ -164,7 +187,10 @@ func startOverlayIntegration(ctx context.Context) {
 		if ok != 0 {
 			defer procUnregisterHotKey.Call(0, hotKeyID)
 		} else {
-			fmt.Println("全局快捷键注册失败，仍可使用面板自动交互:", winCallError(callErr))
+			fmt.Println(
+				"全局快捷键注册失败，仍可使用面板自动交互:",
+				winCallError(callErr),
+			)
 		}
 
 		fmt.Println("鼠标穿透已启用，移到控制面板会自动进入交互")
@@ -184,16 +210,35 @@ func startOverlayIntegration(ctx context.Context) {
 			if ret == 0 {
 				return
 			}
+
 			if msg.Message != wmHotKey || msg.WParam != hotKeyID {
 				continue
 			}
 
+			// Ctrl+Alt+D 切换为手动交互模式。
 			manualInteractiveMode.Store(!manualInteractiveMode.Load())
 			refreshOverlayInteraction(hwnd)
 		}
 	}()
 }
+func startOverlayCursorTracking(ctx context.Context, hwnd uintptr) {
+	go func() {
+		ticker := time.NewTicker(16 * time.Millisecond)
+		defer ticker.Stop()
 
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// 手动交互模式由快捷键控制，这里不要覆盖它的状态。
+				if !manualInteractiveMode.Load() {
+					refreshOverlayInteraction(hwnd)
+				}
+			}
+		}
+	}()
+}
 func (a *App) SetOverlayInteractiveArea(
 	x int,
 	y int,
@@ -308,20 +353,23 @@ func refreshOverlayInteraction(hwnd uintptr) {
 		updateOverlayInteraction(point.x, point.y)
 	}
 }
-
+func isOverlayInteractivePoint(x int32, y int32) bool {
+	area := overlayArea.Load()
+	return area != nil &&
+		area.visible &&
+		x >= area.left &&
+		x < area.right &&
+		y >= area.top &&
+		y < area.bottom
+}
 func updateOverlayInteraction(x int32, y int32) {
 	hwnd := overlayHWND.Load()
 	if hwnd == 0 {
 		return
 	}
 
-	area := overlayArea.Load()
-	interactive := area != nil &&
-		area.visible &&
-		x >= area.left &&
-		x < area.right &&
-		y >= area.top &&
-		y < area.bottom
+	interactive := overlayPointerEngaged.Load() ||
+		isOverlayInteractivePoint(x, y)
 
 	previousPassThrough := overlayPassThrough.Load()
 	styleReady := overlayStyleReady.Load()

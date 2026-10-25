@@ -18,20 +18,26 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --ink-950: #0c1016;
-  --ink-900: #10151e;
-  --ink-850: #151b25;
-  --ink-800: #1a222e;
+  --theme-hue: 168;
+  --ink-950: hsl(var(--theme-hue) 20% 6%);
+  --ink-900: hsl(var(--theme-hue) 20% 9%);
+  --ink-850: hsl(var(--theme-hue) 20% 12%);
+  --ink-800: hsl(var(--theme-hue) 20% 15%);
   --line: rgba(255, 255, 255, 0.1);
   --line-strong: rgba(255, 255, 255, 0.17);
   --text: #f4f7f8;
   --muted: #909aa8;
   --muted-strong: #b8c1cc;
-  --accent: #55d8c7;
-  --accent-strong: #7de8da;
-  --accent-ink: #09221f;
+  --accent-rgb: 85, 216, 199;
+  --accent: hsl(var(--theme-hue) 58% 63%);
+  --accent-strong: hsl(var(--theme-hue) 74% 73%);
+  --accent-ink: hsl(var(--theme-hue) 48% 9%);
+  --panel-bg: hsla(168, 20%, 9%, 0.95);
+  --danmaku-panel-bg: hsla(168, 18%, 9%, 0.94);
   --amber: #f5b65c;
   --danger: #ff8b85;
+  --danmaku-font-size: 13px;
+  --danmaku-color: hsl(174 58% 92%);
 }
 
 * {

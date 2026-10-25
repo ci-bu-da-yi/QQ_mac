@@ -162,26 +162,23 @@ func LoadUser() {
 		Users = []User{}
 		return
 	}
-	//先尝试新版本
-	if err := json.Unmarshal(data, &Users); err != nil {
-		if Users == nil {
-			Users = []User{}
-			return
-		}
-	}
-	//旧版本
-	var legacyUsers User
-	if err := json.Unmarshal(data, &legacyUsers); err != nil {
-		fmt.Println("用户数据解析失败！")
-		Users = []User{}
+	// 新版本：用户数组
+	var users []User
+	if err := json.Unmarshal(data, &users); err == nil {
+		Users = users
 		return
 	}
+
+	// 旧版本：单个用户
+	var legacy User
+	if err := json.Unmarshal(data, &legacy); err == nil && legacy.ID != 0 {
+		Users = []User{legacy}
+		return
+	}
+
+	fmt.Println("用户数据解析失败！")
+	Users = []User{}
 	//校验是否为合法用户
-	if legacyUsers.ID == 0 && legacyUsers.Name == "" && legacyUsers.Password == "" {
-		Users = []User{}
-		return
-	}
-	Users = []User{legacyUsers}
 }
 
 // 登录

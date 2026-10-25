@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"os"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -66,7 +67,11 @@ func (a *App) startup(ctx context.Context) {
 		println("获取路径失败！", err.Error())
 		return
 	}
-	if err1 := CreateDesktopShortcut(exePath); err1 != nil {
-		println("创建桌面快捷方式失败：:", err1.Error())
+
+	// 开发程序不要覆盖桌面正式快捷方式
+	if !strings.HasSuffix(strings.ToLower(exePath), "-dev.exe") {
+		if err1 := CreateDesktopShortcut(exePath); err1 != nil {
+			println("创建桌面快捷方式失败：:", err1.Error())
+		}
 	}
 }
