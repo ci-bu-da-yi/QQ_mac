@@ -193,31 +193,3 @@ func LoginService(name string, password string) (*User, error) {
 	}
 	return u2, nil
 }
-
-// 防止乱码
-func limitRunes(value string, limit int) string {
-	runes := []rune(value)
-	//没超过限制返回原本字符串
-	if len(runes) <= limit {
-		return value
-	}
-	//截断
-	return string(runes[:limit])
-}
-
-// 获取桌面路径
-func GetDeskPath() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "获取桌面路径失败！", err
-	}
-	deskpath := filepath.Join(homeDir, "Desktop")
-	if info, err := os.Stat(deskpath); err == nil && info.IsDir() {
-		return deskpath, nil
-	}
-	oneDirveDeskPath := filepath.Join(homeDir, "OneDirve", "DeskPath")
-	if info, err := os.Stat(oneDirveDeskPath); err == nil && info.IsDir() {
-		return oneDirveDeskPath, nil
-	}
-	return deskpath, err
-}

@@ -1,77 +1,71 @@
 package main
 
 import (
-	"context"
-	"embed"
-	"os"
-	"strings"
+	"net/http"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	wailsWindows "github.com/wailsapp/wails/v2/pkg/options/windows"
+	// macOS 专用配置包
+	wailsMac "github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
-//go:embed all:frontend/dist
-var assets embed.FS
+const appShellHTML = `<!doctype html>
+<html lang="zh-CN">
+<head>
+	<meta charset="UTF-8">
+	<title>QQ桌面弹幕</title>
+</head>
+<body></body>
+</html>`
+
+// 其他静态资源返回404
+func serveAppShell(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(appShellHTML))
+}
 
 func NewApp() *App {
 	return &App{}
 }
 func main() {
-	// Create an instance of the app structure
 	app := NewApp()
-
-	// Create application with options
 	err := wails.Run(&options.App{
-		Title:            "QQ桌面弹幕",
-		Width:            1024,
-		Height:           768,
-		DisableResize:    true,
-		Fullscreen:       true,
-		Frameless:        true,
-		AlwaysOnTop:      true,
-		WindowStartState: options.Fullscreen,
-		CSSDragProperty:  "--wails-draggable",
-		CSSDragValue:     "drag",
+		Title:         "QQ桌面弹幕",
+		Width:         1024,
+		Height:        768,
+		DisableResize: true,
+		Fullscreen:    true,
+		Frameless:     true,
+		AlwaysOnTop:   true,
+		// macOS 专属配置。
+		// 不能把这个字段写成 Windows options。
+		Mac: &wailsMac.Options{
+			// 允许 WebView 透明，方便以后实现弹幕叠层。
+			WebviewIsTransparent: true,
+
+			// 允许窗口半透明。
+			WindowIsTranslucent: true,
+
+			// 防止用户按 Esc 时直接退出全屏。
+			DisableEscapeExitsFullscreen: true,
+		},
+
+		// 没有前端目录时，Wails 仍需要资产处理器
 		AssetServer: &assetserver.Options{
-			Assets: assets,
+			Handler: http.HandlerFunc(serveAppShell),
 		},
-		BackgroundColour: &options.RGBA{R: 0, G: 0, B: 0, A: 0},
-		Windows: &wailsWindows.Options{
-			WebviewIsTransparent:              true,
-			WindowIsTranslucent:               true,
-			DisableFramelessWindowDecorations: true,
-		},
-		OnStartup: func(ctx context.Context) {
-			app.startup(ctx)
-		},
-		//回调函数。触发条件：前端加载完成
-		//否则可能会在鼠标穿透的时候会阻拦其他的操作,会一直穿透
-		OnDomReady: func(ctx context.Context) {
-			startOverlayIntegration(ctx)
-		},
-		Bind: []interface{}{
-			app,
-		},
+
+		OnStartup: app.startup,
+		Bind:      []interface{}{app},
 	})
-	if err != nil {
-		println("Error:", err.Error())
-	}
-}
 
-func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
-	exePath, err := os.Executable()
 	if err != nil {
-		println("获取路径失败！", err.Error())
-		return
-	}
-
-	// 开发程序不要覆盖桌面正式快捷方式
-	if !strings.HasSuffix(strings.ToLower(exePath), "-dev.exe") {
-		if err1 := CreateDesktopShortcut(exePath); err1 != nil {
-			println("创建桌面快捷方式失败：:", err1.Error())
-		}
+		println("启动失败！", err.Error())
 	}
 }

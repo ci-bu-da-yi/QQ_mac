@@ -1,83 +1,16 @@
 package GetMessage
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"my-project/user"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
-
-// Powershell脚本
-const queryScript = `
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-[Console]::OutputEncoding = $utf8
-$OutputEncoding = $utf8
-
-$listenerType = [Windows.UI.Notifications.Management.UserNotificationListener, Windows.UI.Notifications.Management, ContentType = WindowsRuntime]
-Add-Type -AssemblyName System.Runtime.WindowsRuntime
-
-$asyncOperationTypeName = 'IAsyncOperation' + [char]96 + '1'
-$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
-$_.Name -eq 'AsTask' -and
-$_.GetParameters().Count -eq 1 -and
-$_.GetParameters()[0].ParameterType.Name -eq $asyncOperationTypeName
-})[0]
-
-function Await($WinRtTask, $ResultType) {
-$asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
-$netTask = $asTask.Invoke($null, @($WinRtTask))
-$netTask.Wait(-1) | Out-Null
-$netTask.Result
-}
-
-$listener = [Windows.UI.Notifications.Management.UserNotificationListener]::Current
-$accessOperation = $listener.RequestAccessAsync()
-$status = Await $accessOperation ([Windows.UI.Notifications.Management.UserNotificationListenerAccessStatus])
-if ($status -ne 'Allowed') {
-    Write-Error "没有通知访问权限，当前状态：$status。请开启 Windows 通知历史和通知访问权限"
-    exit 1
-}
-
-$notificationsOperation = $listener.GetNotificationsAsync([Windows.UI.Notifications.NotificationKinds]::Toast)
-$all = Await $notificationsOperation ([System.Collections.Generic.IReadOnlyList[Windows.UI.Notifications.UserNotification]])
-
-foreach ($n in $all) {
-$app = ''
-if ($null -ne $n.AppInfo -and $null -ne $n.AppInfo.DisplayInfo) {
-$app = [string]$n.AppInfo.DisplayInfo.DisplayName
-}
-if ($app -notmatch '^(QQ|QQNT|腾讯QQ)$') { continue }
-
-$texts = @()
-if ($null -ne $n.Notification -and $null -ne $n.Notification.Visual) {
-foreach ($binding in $n.Notification.Visual.Bindings) {
-foreach ($t in $binding.GetTextElements()) {
-$texts += [string]$t.Text
-}
-}
-}
-
-$title = ''
-$body = ''
-if ($texts.Count -ge 1) {
-$title = $texts[0]
-}
-if ($texts.Count -ge 2) {
-$body = ($texts[1..($texts.Count-1)] -join ' ')
-} elseif ($texts.Count -eq 1) {
-$body = $texts[0]
-}
-
-"{0}{1}{2:yyyy-MM-dd HH:mm:ss}{1}{3}{1}{4}" -f $n.Id, [char]9, $n.CreationTime.LocalDateTime, $title, $body
-}`
 
 var (
 	Messages []Message
@@ -135,35 +68,6 @@ func SaveMessage() error {
 	}
 	//序列化后写入文件
 	return os.WriteFile(user.MessageFilePath, data, 0644)
-}
-
-// 数据源头
-func queryQQNotifications() ([]string, error) {
-	//隐藏Powershell
-	cmd := exec.Command("powershell", "-Noprofile", "-ExecutionPolicy", "Bypass", "Command", queryScript)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr //命令加入到缓冲
-	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
-		}
-		return nil, fmt.Errorf(
-			"查询通知失败: %w, 详细信息: %s",
-			err,
-			detail,
-		)
-	}
-
-	var lines []string
-	sc := bufio.NewScanner(strings.NewReader(stdout.String()))
-	for sc.Scan() { //都是否有下一行
-		lines = append(lines, sc.Text())
-	}
-	return lines, sc.Err() //可能的错误
 }
 
 var (
